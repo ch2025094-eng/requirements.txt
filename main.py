@@ -1,14 +1,22 @@
 import os
+from dotenv import load_dotenv
+import discord
 
-print("=== 所有環境變數 key ===")
-for k in os.environ.keys():
-    print(k)
+load_dotenv()
 
-print("=== 測試讀取 ===")
-print("DISCORD_TOKEN =", os.getenv("DISCORD_TOKEN"))
+TOKEN = os.getenv("DISCORD_TOKEN")
 
-raise SystemExit("測試結束")
+if not TOKEN:
+    raise ValueError("❌ DISCORD_TOKEN 沒有設定")
 
+intents = discord.Intents.default()
+client = discord.Client(intents=intents)
+
+@client.event
+async def on_ready():
+    print(f"🤖 已登入 {client.user}")
+
+client.run(TOKEN)
 
 import discord
 from discord.ext import commands
@@ -209,6 +217,7 @@ async def setlog(interaction: discord.Interaction, channel: discord.TextChannel)
 
 # ========= 啟動 =========
 bot.run(TOKEN)
+
 
 
 
