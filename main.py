@@ -1,10 +1,5 @@
 import os
 from dotenv import load_dotenv
-load_dotenv()
-
-TOKEN = os.getenv("DISCORD_TOKEN")
-print("TOKEN =", TOKEN[:10], "...")
-
 import discord
 from discord.ext import commands
 from discord import app_commands
@@ -12,9 +7,17 @@ import time
 import sqlite3
 from datetime import timedelta
 
-TOKEN = "你的TOKEN"
+# ========= 讀取環境變數 =========
+load_dotenv()
 
+TOKEN = os.getenv("DISCORD_TOKEN")
 
+if not TOKEN:
+    raise ValueError("❌ DISCORD_TOKEN 沒有設定，請檢查 .env 或部署平台環境變數")
+
+print("✅ TOKEN 讀取成功")
+
+# ========= Bot 設定 =========
 intents = discord.Intents.default()
 intents.message_content = True
 intents.members = True
@@ -27,15 +30,19 @@ cursor = db.cursor()
 
 cursor.execute("CREATE TABLE IF NOT EXISTS blacklist (user_id INTEGER PRIMARY KEY)")
 cursor.execute("CREATE TABLE IF NOT EXISTS whitelist (user_id INTEGER PRIMARY KEY)")
-cursor.execute("""CREATE TABLE IF NOT EXISTS config (
+cursor.execute("""
+CREATE TABLE IF NOT EXISTS config (
     guild_id INTEGER PRIMARY KEY,
     log_channel INTEGER
-)""")
-cursor.execute("""CREATE TABLE IF NOT EXISTS stats (
+)
+""")
+cursor.execute("""
+CREATE TABLE IF NOT EXISTS stats (
     id INTEGER PRIMARY KEY,
     timeouts INTEGER,
     mutes INTEGER
-)""")
+)
+""")
 db.commit()
 
 cursor.execute("SELECT * FROM stats WHERE id=1")
@@ -83,7 +90,7 @@ async def get_or_create_muted_role(guild):
 async def on_ready():
     print(f"🤖 已登入 {bot.user}")
     await bot.tree.sync()
-    print("Slash 指令已同步")
+    print("✅ Slash 指令已同步")
 
 @bot.event
 async def on_message(msg):
@@ -170,22 +177,6 @@ async def remove_white(interaction: discord.Interaction, member: discord.Member)
     db.commit()
     await interaction.response.send_message(f"❌ 已移除白名單：{member}", ephemeral=True)
 
-@bot.tree.command(name="查看黑名單", description="查看所有黑名單用戶ID")
-@admin()
-async def view_black(interaction: discord.Interaction):
-    cursor.execute("SELECT user_id FROM blacklist")
-    rows = cursor.fetchall()
-    text = "\n".join(str(r[0]) for r in rows) or "（空）"
-    await interaction.response.send_message(f"🚫 黑名單：\n{text}", ephemeral=True)
-
-@bot.tree.command(name="查看白名單", description="查看所有白名單用戶ID")
-@admin()
-async def view_white(interaction: discord.Interaction):
-    cursor.execute("SELECT user_id FROM whitelist")
-    rows = cursor.fetchall()
-    text = "\n".join(str(r[0]) for r in rows) or "（空）"
-    await interaction.response.send_message(f"✅ 白名單：\n{text}", ephemeral=True)
-
 @bot.tree.command(name="防炸狀態", description="查看防炸統計數據")
 @admin()
 async def status(interaction: discord.Interaction):
@@ -199,21 +190,12 @@ async def status(interaction: discord.Interaction):
 @bot.tree.command(name="設置日誌頻道", description="設定防炸日誌輸出頻道")
 @admin()
 async def setlog(interaction: discord.Interaction, channel: discord.TextChannel):
-    cursor.execute("INSERT OR REPLACE INTO config VALUES (?,?)",
-                   (interaction.guild.id, channel.id))
+    cursor.execute(
+        "INSERT OR REPLACE INTO config VALUES (?,?)",
+        (interaction.guild.id, channel.id)
+    )
     db.commit()
     await interaction.response.send_message("📁 日誌頻道已設定", ephemeral=True)
 
-@bot.tree.command(name="help", description="查看所有防炸系統指令")
-async def help_cmd(interaction: discord.Interaction):
-    await interaction.response.send_message(
-        "🛡 防炸系統 v3.3\n"
-        "/加入黑名單\n/移除黑名單\n"
-        "/加入白名單\n/移除白名單\n"
-        "/查看黑名單\n/查看白名單\n"
-        "/防炸狀態\n/設置日誌頻道\n",
-        ephemeral=True
-    )
-
-assert TOKEN, "❌ TOKEN 是空的，請檢查 .env"
+# ========= 啟動 =========
 bot.run(TOKEN)
