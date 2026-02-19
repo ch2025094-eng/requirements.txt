@@ -1,4 +1,10 @@
-import io
+import os
+from dotenv import load_dotenv
+load_dotenv()
+
+TOKEN = os.getenv("DISCORD_TOKEN")
+print("TOKEN =", TOKEN[:10], "...")
+
 import discord
 from discord.ext import commands
 from discord import app_commands
@@ -6,7 +12,8 @@ import time
 import sqlite3
 from datetime import timedelta
 
-TOKEN = os.getenv("TOKEN")
+TOKEN = "你的TOKEN"
+
 
 intents = discord.Intents.default()
 intents.message_content = True
@@ -208,4 +215,5 @@ async def help_cmd(interaction: discord.Interaction):
         ephemeral=True
     )
 
+assert TOKEN, "❌ TOKEN 是空的，請檢查 .env"
 bot.run(TOKEN)
