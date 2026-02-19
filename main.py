@@ -1,4 +1,8 @@
 import os
+from dotenv import load_dotenv
+
+# 載入 .env（本地用，Railway 其實不需要）
+load_dotenv()
 
 TOKEN = os.getenv("DISCORD_TOKEN")
 
@@ -207,4 +211,5 @@ async def setlog(interaction: discord.Interaction, channel: discord.TextChannel)
 
 # ========= 啟動 =========
 bot.run(TOKEN)
+
 
