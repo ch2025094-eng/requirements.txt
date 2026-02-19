@@ -1,5 +1,13 @@
 import os
-from dotenv import load_dotenv
+
+TOKEN = os.getenv("DISCORD_TOKEN")
+
+if not TOKEN:
+    print("⚠️ 目前環境變數：", os.environ)
+    raise ValueError("❌ DISCORD_TOKEN 沒有設定")
+
+print("✅ 成功讀取 DISCORD_TOKEN")
+
 import discord
 from discord.ext import commands
 from discord import app_commands
@@ -199,3 +207,4 @@ async def setlog(interaction: discord.Interaction, channel: discord.TextChannel)
 
 # ========= 啟動 =========
 bot.run(TOKEN)
+
