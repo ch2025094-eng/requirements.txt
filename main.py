@@ -1,16 +1,14 @@
 import os
-from dotenv import load_dotenv
 
-# 載入 .env（本地用，Railway 其實不需要）
-load_dotenv()
+print("=== 所有環境變數 key ===")
+for k in os.environ.keys():
+    print(k)
 
-TOKEN = os.getenv("DISCORD_TOKEN")
+print("=== 測試讀取 ===")
+print("DISCORD_TOKEN =", os.getenv("DISCORD_TOKEN"))
 
-if not TOKEN:
-    print("⚠️ 目前環境變數：", os.environ)
-    raise ValueError("❌ DISCORD_TOKEN 沒有設定")
+raise SystemExit("測試結束")
 
-print("✅ 成功讀取 DISCORD_TOKEN")
 
 import discord
 from discord.ext import commands
@@ -211,5 +209,6 @@ async def setlog(interaction: discord.Interaction, channel: discord.TextChannel)
 
 # ========= 啟動 =========
 bot.run(TOKEN)
+
 
 
