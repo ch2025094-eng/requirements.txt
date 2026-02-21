@@ -8,7 +8,7 @@ from datetime import datetime, timedelta
 
 # ===== 讀取 TOKEN =====
 load_dotenv()
-TOKEN = "DISCORD_TOKEN"
+TOKEN = os.getenv("DISCORD_TOKEN")
 
 if not TOKEN:
     raise ValueError("❌ DISCORD_TOKEN 沒有設定")
@@ -256,3 +256,4 @@ async def status(interaction: discord.Interaction):
 
 # ===== 啟動 =====
 bot.run(TOKEN)
+
