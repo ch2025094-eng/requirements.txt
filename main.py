@@ -53,16 +53,15 @@ CREATE TABLE IF NOT EXISTS stats (
 
 cursor.execute("INSERT OR IGNORE INTO stats (id) VALUES (1)")
 
-db.commit()
-# ===== 日誌函式 =====
-async def send_log(guild, message):
-    cursor.execute("SELECT log_channel FROM config WHERE guild_id=?", (guild.id,))
-    row = cursor.fetchone()
-    if row:
-        channel = guild.get_channel(row[0])
-        if channel:
-            await channel.send(message)
+# 日誌頻道設定
+cursor.execute("""
+CREATE TABLE IF NOT EXISTS config (
+    guild_id INTEGER PRIMARY KEY,
+    log_channel_id INTEGER
+)
+""")
 
+db.commit()
 # ===== 記憶體追蹤 =====
 join_tracker = {}
 message_tracker = {}
@@ -151,7 +150,7 @@ async def on_message(message):
         if now - t < timedelta(seconds=5)
     ]
 
-    if len(message_tracker[message.author.id]) >= 5:
+    if len(message_tracker[message.author.id]) >= 4:
         await message.channel.send(f"🚨 {message.author.mention} 刷頻已列入黑名單")
         cursor.execute("INSERT OR IGNORE INTO blacklist VALUES (?)", (message.author.id,))
         db.commit()
@@ -199,13 +198,6 @@ async def on_guild_update(before, after):
     if before.icon != after.icon:
         await after.edit(icon=before.icon)
         await send_log(after, "🛑 伺服器圖示已還原")
-
-
-# ==== 防止頻道名稱被改成 nuked =====
-@bot.event
-async def on_guild_channel_update(before, after):
-    if "nuked" in after.name.lower():
-        await after.edit(name=before.name)
 
 # ===================== Slash 指令 =====================
 
@@ -351,15 +343,22 @@ async def view_white(interaction: discord.Interaction):
         await interaction.followup.send(embed=e)
 
 @bot.tree.command(name="設定日誌頻道", description="設定防炸事件的日誌輸出頻道")
-@admin()
-async def set_log(interaction: discord.Interaction, channel: discord.TextChannel):
-    cursor.execute(
-        "INSERT OR REPLACE INTO config VALUES (?,?)",
-        (interaction.guild.id, channel.id)
-    )
-    db.commit()
-    await interaction.response.send_message(f"📁 日誌頻道已設為 {channel.mention}")
+@app_commands.checks.has_permissions(administrator=True)
+async def status(interaction: discord.Interaction):
 
+    cursor.execute("SELECT kicks, bans, channel_restores FROM stats WHERE id=1")
+    kicks, bans, restores = cursor.fetchone()
+
+    embed = discord.Embed(
+        title="🛡 防炸統計",
+        color=discord.Color.blue()
+    )
+
+    embed.add_field(name="踢出次數", value=kicks)
+    embed.add_field(name="封鎖次數", value=bans)
+    embed.add_field(name="還原頻道", value=restores)
+
+    await interaction.response.send_message(embed=embed)
 @bot.tree.command(name="防炸狀態", description="查看目前自動踢出的統計數量")
 @admin()
 async def status(interaction: discord.Interaction):
@@ -369,4 +368,5 @@ async def status(interaction: discord.Interaction):
 
 # ===== 啟動 =====
 bot.run(TOKEN)
+
 
