@@ -23,6 +23,7 @@ bot = commands.Bot(command_prefix="!", intents=intents)
 db = sqlite3.connect("bot.db", check_same_thread=False)
 cursor = db.cursor()
 
+# 黑名單
 cursor.execute("""
 CREATE TABLE IF NOT EXISTS blacklist (
     user_id INTEGER PRIMARY KEY,
@@ -31,6 +32,7 @@ CREATE TABLE IF NOT EXISTS blacklist (
 )
 """)
 
+# 白名單
 cursor.execute("""
 CREATE TABLE IF NOT EXISTS whitelist (
     user_id INTEGER PRIMARY KEY,
@@ -39,8 +41,19 @@ CREATE TABLE IF NOT EXISTS whitelist (
 )
 """)
 
-db.commit()
+# 統計資料
+cursor.execute("""
+CREATE TABLE IF NOT EXISTS stats (
+    id INTEGER PRIMARY KEY,
+    kicks INTEGER DEFAULT 0,
+    bans INTEGER DEFAULT 0,
+    channel_restores INTEGER DEFAULT 0
+)
+""")
 
+cursor.execute("INSERT OR IGNORE INTO stats (id) VALUES (1)")
+
+db.commit()
 # ===== 日誌函式 =====
 async def send_log(guild, message):
     cursor.execute("SELECT log_channel FROM config WHERE guild_id=?", (guild.id,))
@@ -356,3 +369,4 @@ async def status(interaction: discord.Interaction):
 
 # ===== 啟動 =====
 bot.run(TOKEN)
+
