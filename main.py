@@ -367,7 +367,15 @@ async def view_white(interaction: discord.Interaction):
         await interaction.followup.send(embed=e)
 
 @bot.tree.command(name="設定日誌頻道", description="設定防炸事件的日誌輸出頻道")
-@app_commands.checks.has_permissions(administrator=True)
+@admin()
+async def set_log(interaction: discord.Interaction, channel: discord.TextChannel):
+    cursor.execute(
+        "INSERT OR REPLACE INTO config VALUES (?,?)",
+        (interaction.guild.id, channel.id)
+    )
+    db.commit()
+    await interaction.response.send_message(f"📁 日誌頻道已設為 {channel.mention}")
+    @app_commands.checks.has_permissions(administrator=True)
 async def status(interaction: discord.Interaction):
 
     cursor.execute("SELECT kicks, bans, channel_restores FROM stats WHERE id=1")
@@ -383,16 +391,18 @@ async def status(interaction: discord.Interaction):
     embed.add_field(name="還原頻道", value=restores)
 
     await interaction.response.send_message(embed=embed)
+
+
 @bot.tree.command(name="防炸狀態", description="查看目前自動踢出的統計數量")
 @admin()
 async def status(interaction: discord.Interaction):
     cursor.execute("SELECT kicks FROM stats WHERE id=1")
     row = cursor.fetchone()
     await interaction.response.send_message(f"🚨 目前自動踢出：{row[0]} 人")
-
-
+   
 # ===== 啟動 =====
 bot.run(TOKEN)
+
 
 
 
