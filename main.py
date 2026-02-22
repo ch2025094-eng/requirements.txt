@@ -161,21 +161,6 @@ async def on_message(message):
 
     await bot.process_commands(message)
 
-# ===== 防改頻道名稱 =====
-@bot.event
-async def on_guild_channel_update(before, after):
-
-    if before.name != after.name:
-        async for entry in after.guild.audit_logs(limit=1, action=discord.AuditLogAction.channel_update):
-            if entry.target.id == after.id:
-                await after.edit(name=before.name)
-                try:
-                    await entry.user.kick(reason="擅自修改頻道名稱")
-                except:
-                    pass
-                await send_log(after.guild, f"🛑 阻止改名並踢出：{entry.user}")
-                break
-
 # ===== 防刪角色 =====
 @bot.event
 async def on_guild_role_delete(role):
@@ -198,6 +183,45 @@ async def on_guild_update(before, after):
     if before.icon != after.icon:
         await after.edit(icon=before.icon)
         await send_log(after, "🛑 伺服器圖示已還原")
+
+# ===== 防新增頻道為nuked =====
+@bot.event
+async def on_guild_channel_create(channel):
+
+    # 如果名稱不包含 nuked 就略過
+    if "nuked" not in channel.name.lower():
+        return
+
+    guild = channel.guild
+
+    async for entry in guild.audit_logs(limit=1, action=discord.AuditLogAction.channel_create):
+
+        user = entry.user
+
+        # 檢查是否白名單
+        cursor.execute("SELECT user_id FROM whitelist WHERE user_id=?", (user.id,))
+        if cursor.fetchone():
+            return  # 白名單不處理
+
+        # 刪除該頻道
+        await channel.delete(reason="禁止建立 nuked 頻道")
+
+        # 踢出違規者
+        await user.kick(reason="建立 nuked 頻道")
+
+        # 更新統計
+        cursor.execute("UPDATE stats SET kicks = kicks + 1 WHERE id=1")
+        db.commit()
+
+        # 發送日誌
+        log_channel = get_log_channel(guild)
+        if log_channel:
+            await log_channel.send(
+                f"🚨 {user.mention} 嘗試建立 nuked 頻道，已刪除並踢出"
+            )
+
+        break
+
 
 # ===================== Slash 指令 =====================
 
@@ -366,7 +390,9 @@ async def status(interaction: discord.Interaction):
     row = cursor.fetchone()
     await interaction.response.send_message(f"🚨 目前自動踢出：{row[0]} 人")
 
+
 # ===== 啟動 =====
 bot.run(TOKEN)
+
 
 
