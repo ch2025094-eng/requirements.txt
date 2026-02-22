@@ -20,14 +20,25 @@ intents = discord.Intents.all()
 bot = commands.Bot(command_prefix="!", intents=intents)
 
 # ===== 資料庫 =====
-db = sqlite3.connect("bot.db")
+db = sqlite3.connect("bot.db", check_same_thread=False)
 cursor = db.cursor()
 
-cursor.execute("CREATE TABLE IF NOT EXISTS blacklist (user_id INTEGER PRIMARY KEY)")
-cursor.execute("CREATE TABLE IF NOT EXISTS whitelist (user_id INTEGER PRIMARY KEY)")
-cursor.execute("CREATE TABLE IF NOT EXISTS config (guild_id INTEGER PRIMARY KEY, log_channel INTEGER)")
-cursor.execute("CREATE TABLE IF NOT EXISTS stats (id INTEGER PRIMARY KEY, kicks INTEGER DEFAULT 0)")
-cursor.execute("INSERT OR IGNORE INTO stats VALUES (1,0)")
+cursor.execute("""
+CREATE TABLE IF NOT EXISTS blacklist (
+    user_id INTEGER PRIMARY KEY,
+    added_by INTEGER,
+    added_at TEXT
+)
+""")
+
+cursor.execute("""
+CREATE TABLE IF NOT EXISTS whitelist (
+    user_id INTEGER PRIMARY KEY,
+    added_by INTEGER,
+    added_at TEXT
+)
+""")
+
 db.commit()
 
 # ===== 日誌函式 =====
@@ -153,21 +164,6 @@ async def on_guild_channel_update(before, after):
                 await send_log(after.guild, f"🛑 阻止改名並踢出：{entry.user}")
                 break
 
-# ===== 防刪頻道 + 自動還原 =====
-@bot.event
-async def on_guild_channel_delete(channel):
-
-    async for entry in channel.guild.audit_logs(limit=1, action=discord.AuditLogAction.channel_delete):
-        if entry.target.id == channel.id:
-            await channel.guild.create_text_channel(name=channel.name)
-            try:
-                await entry.user.kick(reason="刪除頻道")
-            except:
-                pass
-            await send_log(channel.guild, f"🗑 頻道被刪除已還原：{channel.name}")
-            await send_log(channel.guild, f"🚨 已踢出操作者：{entry.user}")
-            break
-
 # ===== 防刪角色 =====
 @bot.event
 async def on_guild_role_delete(role):
@@ -191,14 +187,34 @@ async def on_guild_update(before, after):
         await after.edit(icon=before.icon)
         await send_log(after, "🛑 伺服器圖示已還原")
 
+
+# ==== 防止頻道名稱被改成 nuked =====
+@bot.event
+async def on_guild_channel_update(before, after):
+    if "nuked" in after.name.lower():
+        await after.edit(name=before.name)
+
 # ===================== Slash 指令 =====================
 
-@bot.tree.command(name="加入黑名單", description="將指定成員加入黑名單，進入伺服器會自動踢出")
+from datetime import datetime
+import discord
+
+@bot.tree.command(name="加入黑名單", description="將成員加入黑名單")
 @admin()
 async def add_black(interaction: discord.Interaction, member: discord.Member):
-    cursor.execute("INSERT OR IGNORE INTO blacklist VALUES (?)", (member.id,))
-    db.commit()
-    await interaction.response.send_message("🚫 已加入黑名單")
+
+    cursor.execute("SELECT user_id FROM blacklist WHERE user_id = ?", (member.id,))
+    if cursor.fetchone():
+        await interaction.response.send_message("❌ 該成員已在黑名單中", ephemeral=True)
+        return
+
+    cursor.execute(
+        "INSERT INTO blacklist (user_id, added_by, added_at) VALUES (?, ?, ?)",
+        (member.id, interaction.user.id, datetime.now().strftime("%Y-%m-%d %H:%M:%S"))
+    )
+    conn.commit()
+
+    await interaction.response.send_message(f"✅ 已將 {member.mention} 加入黑名單")
 
 @bot.tree.command(name="移除黑名單", description="將指定成員從黑名單移除")
 @admin()
@@ -221,21 +237,105 @@ async def remove_white(interaction: discord.Interaction, member: discord.Member)
     db.commit()
     await interaction.response.send_message("🔴 已移除白名單")
 
-@bot.tree.command(name="查看黑名單", description="查看目前所有黑名單成員ID")
+@bot.tree.command(name="查看黑名單", description="查看黑名單完整資訊")
 @admin()
 async def view_black(interaction: discord.Interaction):
-    cursor.execute("SELECT user_id FROM blacklist")
-    rows = cursor.fetchall()
-    msg = "\n".join([str(r[0]) for r in rows]) if rows else "黑名單是空的"
-    await interaction.response.send_message(msg)
 
-@bot.tree.command(name="查看白名單", description="查看目前所有白名單成員ID")
+    cursor.execute("SELECT * FROM blacklist")
+    rows = cursor.fetchall()
+
+    if not rows:
+        await interaction.response.send_message("黑名單是空的", ephemeral=True)
+        return
+
+    embeds = []
+    embed = discord.Embed(
+        title="🚫 黑名單列表",
+        color=discord.Color.red()
+    )
+
+    count = 0
+
+    for user_id, added_by, added_at in rows:
+        member = interaction.guild.get_member(user_id)
+        admin_user = interaction.guild.get_member(added_by)
+
+        name = member.mention if member else f"未知使用者 ({user_id})"
+        admin_name = admin_user.mention if admin_user else f"未知管理員 ({added_by})"
+
+        embed.add_field(
+            name=f"👤 {name}",
+            value=f"🆔 `{user_id}`\n"
+                  f"👮 加入者：{admin_name}\n"
+                  f"🕒 時間：{added_at}",
+            inline=False
+        )
+
+        count += 1
+
+        if count % 25 == 0:
+            embeds.append(embed)
+            embed = discord.Embed(
+                title="🚫 黑名單列表（續）",
+                color=discord.Color.red()
+            )
+
+    embeds.append(embed)
+
+    await interaction.response.send_message(embed=embeds[0])
+
+    for e in embeds[1:]:
+        await interaction.followup.send(embed=e)
+
+@bot.tree.command(name="查看白名單", description="查看白名單完整資訊")
 @admin()
 async def view_white(interaction: discord.Interaction):
-    cursor.execute("SELECT user_id FROM whitelist")
+
+    cursor.execute("SELECT * FROM whitelist")
     rows = cursor.fetchall()
-    msg = "\n".join([str(r[0]) for r in rows]) if rows else "白名單是空的"
-    await interaction.response.send_message(msg)
+
+    if not rows:
+        await interaction.response.send_message("白名單是空的", ephemeral=True)
+        return
+
+    embeds = []
+    embed = discord.Embed(
+        title="✅ 白名單列表",
+        color=discord.Color.green()
+    )
+
+    count = 0
+
+    for user_id, added_by, added_at in rows:
+        member = interaction.guild.get_member(user_id)
+        admin_user = interaction.guild.get_member(added_by)
+
+        name = member.mention if member else f"未知使用者 ({user_id})"
+        admin_name = admin_user.mention if admin_user else f"未知管理員 ({added_by})"
+
+        embed.add_field(
+            name=f"👤 {name}",
+            value=f"🆔 `{user_id}`\n"
+                  f"👮 加入者：{admin_name}\n"
+                  f"🕒 時間：{added_at}",
+            inline=False
+        )
+
+        count += 1
+
+        if count % 25 == 0:
+            embeds.append(embed)
+            embed = discord.Embed(
+                title="✅ 白名單列表（續）",
+                color=discord.Color.green()
+            )
+
+    embeds.append(embed)
+
+    await interaction.response.send_message(embed=embeds[0])
+
+    for e in embeds[1:]:
+        await interaction.followup.send(embed=e)
 
 @bot.tree.command(name="設定日誌頻道", description="設定防炸事件的日誌輸出頻道")
 @admin()
@@ -256,4 +356,3 @@ async def status(interaction: discord.Interaction):
 
 # ===== 啟動 =====
 bot.run(TOKEN)
-
