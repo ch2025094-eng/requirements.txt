@@ -366,42 +366,29 @@ async def view_white(interaction: discord.Interaction):
     for e in embeds[1:]:
         await interaction.followup.send(embed=e)
 
-@bot.tree.command(name="設定日誌頻道", description="設定防炸事件的日誌輸出頻道")
-@admin()
+@bot.tree.command(name="設定日誌頻道")
+@app_commands.checks.has_permissions(administrator=True)
 async def set_log(interaction: discord.Interaction, channel: discord.TextChannel):
-    cursor.execute(
-        "INSERT OR REPLACE INTO config VALUES (?,?)",
-        (interaction.guild.id, channel.id)
-    )
+
+    cursor.execute(...)
     db.commit()
-    await interaction.response.send_message(f"📁 日誌頻道已設為 {channel.mention}")
-    @app_commands.checks.has_permissions(administrator=True)
+
+    await interaction.response.send_message("完成")
+
+
+@bot.tree.command(name="防炸狀態")
+@app_commands.checks.has_permissions(administrator=True)
 async def status(interaction: discord.Interaction):
 
     cursor.execute("SELECT kicks, bans, channel_restores FROM stats WHERE id=1")
     kicks, bans, restores = cursor.fetchone()
 
-    embed = discord.Embed(
-        title="🛡 防炸統計",
-        color=discord.Color.blue()
-    )
-
-    embed.add_field(name="踢出次數", value=kicks)
-    embed.add_field(name="封鎖次數", value=bans)
-    embed.add_field(name="還原頻道", value=restores)
+    embed = discord.Embed(title="防炸狀態")
 
     await interaction.response.send_message(embed=embed)
-
-
-@bot.tree.command(name="防炸狀態", description="查看目前自動踢出的統計數量")
-@admin()
-async def status(interaction: discord.Interaction):
-    cursor.execute("SELECT kicks FROM stats WHERE id=1")
-    row = cursor.fetchone()
-    await interaction.response.send_message(f"🚨 目前自動踢出：{row[0]} 人")
-   
 # ===== 啟動 =====
 bot.run(TOKEN)
+
 
 
 
