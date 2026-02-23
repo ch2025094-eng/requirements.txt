@@ -1,238 +1,221 @@
 import discord
-from discord.ext import commands
 from discord import app_commands
-import time
+from discord.ext import commands
 import sqlite3
-from datetime import timedelta
-
-# ========= 讀取環境變數 =========
-load_dotenv()
+from datetime import datetime, UTC
+import os
+from collections import defaultdict
 
 TOKEN = os.getenv("DISCORD_TOKEN")
 
-if not TOKEN:
-    raise ValueError("❌ DISCORD_TOKEN 沒有設定，請檢查 .env 或部署平台環境變數")
-
-print("✅ TOKEN 讀取成功")
-
-# ========= Bot 設定 =========
-intents = discord.Intents.default()
-intents.message_content = True
-intents.members = True
-
+intents = discord.Intents.all()
 bot = commands.Bot(command_prefix="!", intents=intents)
 
-# ========= 資料庫 =========
-db = sqlite3.connect("bot.db")
+# ================= 資料庫 =================
+
+db = sqlite3.connect("bot.db", check_same_thread=False)
 cursor = db.cursor()
 
-cursor.execute("CREATE TABLE IF NOT EXISTS blacklist (user_id INTEGER PRIMARY KEY)")
-cursor.execute("CREATE TABLE IF NOT EXISTS whitelist (user_id INTEGER PRIMARY KEY)")
+cursor.execute("""
+CREATE TABLE IF NOT EXISTS whitelist (
+    user_id INTEGER PRIMARY KEY,
+    added_by INTEGER,
+    added_at TEXT
+)
+""")
+
+cursor.execute("""
+CREATE TABLE IF NOT EXISTS blacklist (
+    user_id INTEGER PRIMARY KEY,
+    added_by INTEGER,
+    added_at TEXT
+)
+""")
+
 cursor.execute("""
 CREATE TABLE IF NOT EXISTS config (
     guild_id INTEGER PRIMARY KEY,
-    log_channel INTEGER
+    log_channel_id INTEGER
 )
 """)
+
 cursor.execute("""
 CREATE TABLE IF NOT EXISTS stats (
     id INTEGER PRIMARY KEY,
-    timeouts INTEGER,
-    mutes INTEGER
+    bans INTEGER DEFAULT 0,
+    locks INTEGER DEFAULT 0
 )
 """)
+
+cursor.execute("INSERT OR IGNORE INTO stats (id) VALUES (1)")
 db.commit()
 
-cursor.execute("SELECT * FROM stats WHERE id=1")
-if not cursor.fetchone():
-    cursor.execute("INSERT INTO stats VALUES (1,0,0)")
+# ================= 工具 =================
+
+def is_whitelisted(user_id):
+    cursor.execute("SELECT user_id FROM whitelist WHERE user_id=?", (user_id,))
+    return cursor.fetchone() is not None
+
+def get_log_channel(guild):
+    cursor.execute("SELECT log_channel_id FROM config WHERE guild_id=?", (guild.id,))
+    result = cursor.fetchone()
+    if result:
+        return guild.get_channel(result[0])
+    return None
+
+async def punish(guild, user, reason):
+    if is_whitelisted(user.id):
+        return
+    try:
+        await user.ban(reason=reason)
+        cursor.execute("UPDATE stats SET bans = bans + 1 WHERE id=1")
+        db.commit()
+    except:
+        pass
+
+    log = get_log_channel(guild)
+    if log:
+        await log.send(f"🚨 {user.mention} 已被封鎖 | 原因: {reason}")
+
+async def lock_server(guild):
+    for role in guild.roles:
+        if role.permissions.administrator:
+            try:
+                await role.edit(permissions=discord.Permissions.none())
+            except:
+                pass
+
+    cursor.execute("UPDATE stats SET locks = locks + 1 WHERE id=1")
     db.commit()
 
-# ========= 參數 =========
-USER_LIMIT = 5
-USER_MUTE_LIMIT = 8
-USER_WINDOW = 3
-MUTE_TIME = 120
+    log = get_log_channel(guild)
+    if log:
+        await log.send("🔒 偵測到爆量攻擊，伺服器已進入鎖定模式")
 
-user_msgs = {}
+# ================= 啟動 =================
 
-# ========= 工具 =========
-def is_admin(m):
-    return m.guild_permissions.administrator
-
-def track_user(uid):
-    now = time.time()
-    user_msgs.setdefault(uid, []).append(now)
-    user_msgs[uid] = [t for t in user_msgs[uid] if now - t <= USER_WINDOW]
-    return len(user_msgs[uid])
-
-async def send_log(guild, text):
-    cursor.execute("SELECT log_channel FROM config WHERE guild_id=?", (guild.id,))
-    row = cursor.fetchone()
-    if row:
-        ch = guild.get_channel(row[0])
-        if ch:
-            await ch.send(text)
-
-async def get_or_create_muted_role(guild):
-    role = discord.utils.get(guild.roles, name="Muted")
-    if role:
-        return role
-    role = await guild.create_role(name="Muted")
-    for channel in guild.channels:
-        await channel.set_permissions(role, send_messages=False)
-    return role
-
-# ========= 事件 =========
 @bot.event
 async def on_ready():
     print(f"🤖 已登入 {bot.user}")
     await bot.tree.sync()
     print("✅ Slash 指令已同步")
 
-@bot.event
-async def on_message(msg):
-    if not msg.guild or msg.author.bot:
-        return
+# ================= 攻擊偵測 =================
 
-    uid = msg.author.id
+channel_tracker = defaultdict(list)
 
-    # 黑名單
-    cursor.execute("SELECT 1 FROM blacklist WHERE user_id=?", (uid,))
-    if cursor.fetchone():
-        await msg.delete()
-        return
-
-    # 白名單
-    cursor.execute("SELECT 1 FROM whitelist WHERE user_id=?", (uid,))
-    if cursor.fetchone():
-        return
-
-    if not is_admin(msg.author):
-        count = track_user(uid)
-
-        if count >= USER_MUTE_LIMIT:
-            role = await get_or_create_muted_role(msg.guild)
-            await msg.author.add_roles(role, reason="嚴重刷頻")
-            await msg.delete()
-            cursor.execute("UPDATE stats SET mutes = mutes + 1 WHERE id=1")
-            db.commit()
-            await send_log(msg.guild, f"🔇 禁言：{msg.author}")
-            return
-
-        elif count >= USER_LIMIT:
-            await msg.delete()
-            try:
-                await msg.author.timeout(
-                    discord.utils.utcnow() + timedelta(seconds=MUTE_TIME),
-                    reason="刷頻"
-                )
-            except:
-                pass
-            cursor.execute("UPDATE stats SET timeouts = timeouts + 1 WHERE id=1")
-            db.commit()
-            await send_log(msg.guild, f"⏳ Timeout：{msg.author}")
-            return
-
-    await bot.process_commands(msg)
-
-# ========= 指令審計 =========
-@bot.event
-async def on_app_command_completion(interaction, command):
-    if interaction.guild:
-        await send_log(interaction.guild, f"📌 {interaction.user} 使用 /{command.name}")
-
-# ======= 防新增怪頻道 =========
 @bot.event
 async def on_guild_channel_create(channel):
 
-    # 如果名稱不包含 nuked 就略過
-    if "nuked" not in channel.name.lower():
-        return
-
-    guild = channel.guild
-
-    async for entry in guild.audit_logs(limit=1, action=discord.AuditLogAction.channel_create):
-
+    async for entry in channel.guild.audit_logs(limit=1, action=discord.AuditLogAction.channel_create):
         user = entry.user
 
-        # 檢查是否白名單
-        cursor.execute("SELECT user_id FROM whitelist WHERE user_id=?", (user.id,))
+        # 黑名單立即封鎖
+        cursor.execute("SELECT user_id FROM blacklist WHERE user_id=?", (user.id,))
         if cursor.fetchone():
-            return  # 白名單不處理
+            await punish(channel.guild, user, "黑名單用戶建立頻道")
+            return
 
-        # 刪除該頻道
-        await channel.delete(reason="禁止建立 nuked 頻道")
+        # 爆量偵測（3秒3頻道）
+        now = datetime.now().timestamp()
+        channel_tracker[user.id].append(now)
+        channel_tracker[user.id] = [t for t in channel_tracker[user.id] if now - t < 3]
 
-        # 踢出違規者
-        await user.kick(reason="建立 nuked 頻道")
+        if len(channel_tracker[user.id]) >= 3:
+            await lock_server(channel.guild)
+            await punish(channel.guild, user, "3秒內大量建立頻道")
+            return
 
-        # 更新統計
-        cursor.execute("UPDATE stats SET kicks = kicks + 1 WHERE id=1")
-        db.commit()
-
-        # 發送日誌
-        log_channel = get_log_channel(guild)
-        if log_channel:
-            await log_channel.send(
-                f"🚨 {user.mention} 嘗試建立 nuked 頻道，已刪除並踢出"
-            )
+        # nuked 防護
+        if "nuked" in channel.name.lower():
+            await channel.delete(reason="建立 nuked 頻道")
+            await punish(channel.guild, user, "建立 nuked 頻道")
+            return
 
         break
 
-# ========= 管理員權限 =========
-def admin():
-    return app_commands.checks.has_permissions(administrator=True)
+@bot.event
+async def on_guild_channel_update(before, after):
+    if before.name == after.name:
+        return
 
-# ========= Slash 指令 =========
-@bot.tree.command(name="加入黑名單", description="將用戶加入永久黑名單")
-@admin()
-async def add_black(interaction: discord.Interaction, member: discord.Member):
-    cursor.execute("INSERT OR IGNORE INTO blacklist VALUES (?)", (member.id,))
-    db.commit()
-    await interaction.response.send_message(f"🚫 已加入黑名單：{member}", ephemeral=True)
+    if "nuked" in after.name.lower():
+        await after.edit(name=before.name)
 
-@bot.tree.command(name="移除黑名單", description="將用戶移出黑名單")
-@admin()
-async def remove_black(interaction: discord.Interaction, member: discord.Member):
-    cursor.execute("DELETE FROM blacklist WHERE user_id=?", (member.id,))
-    db.commit()
-    await interaction.response.send_message(f"❌ 已移除黑名單：{member}", ephemeral=True)
+        async for entry in after.guild.audit_logs(limit=1, action=discord.AuditLogAction.channel_update):
+            await punish(after.guild, entry.user, "改頻道名稱為 nuked")
+            break
 
-@bot.tree.command(name="加入白名單", description="將用戶加入永久白名單")
-@admin()
-async def add_white(interaction: discord.Interaction, member: discord.Member):
-    cursor.execute("INSERT OR IGNORE INTO whitelist VALUES (?)", (member.id,))
-    db.commit()
-    await interaction.response.send_message(f"✅ 已加入白名單：{member}", ephemeral=True)
+# ================= 指令 =================
 
-@bot.tree.command(name="移除白名單", description="將用戶移出白名單")
-@admin()
-async def remove_white(interaction: discord.Interaction, member: discord.Member):
-    cursor.execute("DELETE FROM whitelist WHERE user_id=?", (member.id,))
-    db.commit()
-    await interaction.response.send_message(f"❌ 已移除白名單：{member}", ephemeral=True)
-
-@bot.tree.command(name="防炸狀態", description="查看防炸統計數據")
-@admin()
-async def status(interaction: discord.Interaction):
-    cursor.execute("SELECT timeouts, mutes FROM stats WHERE id=1")
-    row = cursor.fetchone()
-    await interaction.response.send_message(
-        f"📊 Timeout：{row[0]}\n🔇 禁言：{row[1]}",
-        ephemeral=True
-    )
-
-@bot.tree.command(name="設置日誌頻道", description="設定防炸日誌輸出頻道")
-@admin()
-async def setlog(interaction: discord.Interaction, channel: discord.TextChannel):
+@bot.tree.command(name="設定日誌頻道")
+@app_commands.checks.has_permissions(administrator=True)
+async def set_log(interaction: discord.Interaction, channel: discord.TextChannel):
     cursor.execute(
         "INSERT OR REPLACE INTO config VALUES (?,?)",
         (interaction.guild.id, channel.id)
     )
     db.commit()
-    await interaction.response.send_message("📁 日誌頻道已設定", ephemeral=True)
+    await interaction.response.send_message("✅ 日誌頻道已設定")
 
-# ========= 啟動 =========
+@bot.tree.command(name="加入白名單")
+@app_commands.checks.has_permissions(administrator=True)
+async def add_white(interaction: discord.Interaction, member: discord.Member):
+    cursor.execute(
+        "INSERT OR REPLACE INTO whitelist VALUES (?,?,?)",
+        (member.id, interaction.user.id,
+         datetime.now(UTC).strftime("%Y-%m-%d %H:%M:%S"))
+    )
+    db.commit()
+    await interaction.response.send_message(f"✅ {member.mention} 已加入白名單")
+
+@bot.tree.command(name="移除白名單")
+@app_commands.checks.has_permissions(administrator=True)
+async def remove_white(interaction: discord.Interaction, member: discord.Member):
+    cursor.execute("DELETE FROM whitelist WHERE user_id=?", (member.id,))
+    db.commit()
+    await interaction.response.send_message("✅ 已移除白名單")
+
+@bot.tree.command(name="查看白名單")
+async def list_white(interaction: discord.Interaction):
+    cursor.execute("SELECT user_id FROM whitelist")
+    users = cursor.fetchall()
+    text = "\n".join([f"<@{u[0]}>" for u in users]) if users else "無資料"
+    await interaction.response.send_message(f"📜 白名單列表:\n{text}")
+
+@bot.tree.command(name="加入黑名單")
+@app_commands.checks.has_permissions(administrator=True)
+async def add_black(interaction: discord.Interaction, member: discord.Member):
+    cursor.execute(
+        "INSERT OR REPLACE INTO blacklist VALUES (?,?,?)",
+        (member.id, interaction.user.id,
+         datetime.now(UTC).strftime("%Y-%m-%d %H:%M:%S"))
+    )
+    db.commit()
+    await interaction.response.send_message(f"⛔ {member.mention} 已加入黑名單")
+
+@bot.tree.command(name="移除黑名單")
+@app_commands.checks.has_permissions(administrator=True)
+async def remove_black(interaction: discord.Interaction, member: discord.Member):
+    cursor.execute("DELETE FROM blacklist WHERE user_id=?", (member.id,))
+    db.commit()
+    await interaction.response.send_message("✅ 已移除黑名單")
+
+@bot.tree.command(name="查看黑名單")
+async def list_black(interaction: discord.Interaction):
+    cursor.execute("SELECT user_id FROM blacklist")
+    users = cursor.fetchall()
+    text = "\n".join([f"<@{u[0]}>" for u in users]) if users else "無資料"
+    await interaction.response.send_message(f"⛔ 黑名單列表:\n{text}")
+
+@bot.tree.command(name="防炸狀態")
+async def status(interaction: discord.Interaction):
+    cursor.execute("SELECT bans, locks FROM stats WHERE id=1")
+    bans, locks = cursor.fetchone()
+    await interaction.response.send_message(
+        f"🛡 封鎖次數: {bans}\n🔒 鎖服次數: {locks}"
+    )
+
+# ================= 啟動 =================
+
 bot.run(TOKEN)
-
