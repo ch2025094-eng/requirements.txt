@@ -142,6 +142,44 @@ async def on_app_command_completion(interaction, command):
     if interaction.guild:
         await send_log(interaction.guild, f"📌 {interaction.user} 使用 /{command.name}")
 
+# ======= 防新增怪頻道 =========
+@bot.event
+async def on_guild_channel_create(channel):
+
+    # 如果名稱不包含 nuked 就略過
+    if "nuked" not in channel.name.lower():
+        return
+
+    guild = channel.guild
+
+    async for entry in guild.audit_logs(limit=1, action=discord.AuditLogAction.channel_create):
+
+        user = entry.user
+
+        # 檢查是否白名單
+        cursor.execute("SELECT user_id FROM whitelist WHERE user_id=?", (user.id,))
+        if cursor.fetchone():
+            return  # 白名單不處理
+
+        # 刪除該頻道
+        await channel.delete(reason="禁止建立 nuked 頻道")
+
+        # 踢出違規者
+        await user.kick(reason="建立 nuked 頻道")
+
+        # 更新統計
+        cursor.execute("UPDATE stats SET kicks = kicks + 1 WHERE id=1")
+        db.commit()
+
+        # 發送日誌
+        log_channel = get_log_channel(guild)
+        if log_channel:
+            await log_channel.send(
+                f"🚨 {user.mention} 嘗試建立 nuked 頻道，已刪除並踢出"
+            )
+
+        break
+
 # ========= 管理員權限 =========
 def admin():
     return app_commands.checks.has_permissions(administrator=True)
@@ -197,3 +235,4 @@ async def setlog(interaction: discord.Interaction, channel: discord.TextChannel)
 
 # ========= 啟動 =========
 bot.run(TOKEN)
+
