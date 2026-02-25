@@ -244,8 +244,8 @@ async def on_message(message):
 async def help_command(interaction: discord.Interaction):
     await interaction.response.send_message(
         "本機器人功能：\n"
-        "防刪角色 / 防改伺服器名稱 / 防刪頻道（含分類復原）\n"
-        "刷頻偵測（6秒8則）\n"
+        "防刪角色 / 防改伺服器名稱 / 防新增頻道 / 防刪頻道（含分類復原）\n"
+        "刷頻偵測（5秒5則）\n"
         "@everyone濫用偵測\n"
         "黑白名單系統\n"
         "所有防護皆可開關"
@@ -364,4 +364,5 @@ async def view_blacklist(interaction: discord.Interaction):
     await interaction.response.send_message(msg)
 
 bot.run(TOKEN)
+
 
