@@ -77,6 +77,17 @@ async def timeout(member, seconds):
     until = discord.utils.utcnow() + timedelta(seconds=seconds)
     await member.timeout(until)
 
+async def punish_user(member, reason):
+    cursor.execute("SELECT 1 FROM blacklist WHERE user_id=?", (member.id,))
+    blacklisted = cursor.fetchone()
+
+    if blacklisted:
+        await member.guild.ban(member, reason="黑名單再次違規")
+        print(f"{member} 已被封鎖（黑名單再次違規）")
+    else:
+        await timeout(member, 60)
+        add_blacklist(member.id, reason)
+
 # ================= 啟動 =================
 
 @bot.event
@@ -165,22 +176,13 @@ async def on_guild_channel_create(channel):
     if user.bot:
         return
 
-    # 白名單略過
-    cursor.execute("SELECT 1 FROM whitelist WHERE user_id=?", (user.id,))
-    if cursor.fetchone():
+    if is_whitelisted(user.id):
         return
 
-   async def punish_user(member, reason):
-    cursor.execute("SELECT 1 FROM blacklist WHERE user_id=?", (member.id,))
-    blacklisted = cursor.fetchone()
+    await punish_user(user, "未授權新增頻道")
+    await channel.delete()
 
-    if blacklisted:
-        await member.guild.ban(member, reason="黑名單再次違規")
-        print(f"{member} 已被封鎖（黑名單再次違規）")
-    else:
-        from datetime import timedelta
-        await member.timeout(timedelta(seconds=60), reason=reason)
-
+    
         cursor.execute("INSERT OR IGNORE INTO blacklist (user_id) VALUES (?)", (member.id,))
         conn.commit()
 # ================= 刷頻 & @everyone =================
@@ -357,6 +359,7 @@ async def view_blacklist(interaction: discord.Interaction):
     await interaction.response.send_message(msg)
 
 bot.run(TOKEN)
+
 
 
 
