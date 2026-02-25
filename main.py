@@ -181,9 +181,7 @@ async def on_guild_channel_create(channel):
 
     await punish_user(user, "未授權新增頻道")
     await channel.delete()
-
     
-        cursor.execute("INSERT OR IGNORE INTO blacklist (user_id) VALUES (?)", (member.id,))
         conn.commit()
 # ================= 刷頻 & @everyone =================
 
@@ -359,6 +357,7 @@ async def view_blacklist(interaction: discord.Interaction):
     await interaction.response.send_message(msg)
 
 bot.run(TOKEN)
+
 
 
 
