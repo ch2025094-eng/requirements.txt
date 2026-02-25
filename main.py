@@ -97,10 +97,10 @@ async def on_message(message):
     message_tracker[message.author.id].append(now)
     message_tracker[message.author.id] = [
         t for t in message_tracker[message.author.id]
-        if now - t < 6
+        if now - t < 5
     ]
 
-    if len(message_tracker[message.author.id]) >= 8:
+    if len(message_tracker[message.author.id]) >= 5:
         await punish_user(message.author, "刷頻")
         return
 
@@ -287,6 +287,7 @@ async def toggle_channel_create(interaction: discord.Interaction, 狀態: bool):
 # =========================
 
 bot.run(TOKEN)
+
 
 
 
