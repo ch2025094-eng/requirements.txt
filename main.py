@@ -170,16 +170,19 @@ async def on_guild_channel_create(channel):
     if cursor.fetchone():
         return
 
-   # 黑名單再次違規直接封鎖
-cursor.execute("SELECT 1 FROM blacklist WHERE user_id=?", (member.id,))
-is_blacklisted = cursor.fetchone()
+   async def punish_user(member, reason):
+    cursor.execute("SELECT 1 FROM blacklist WHERE user_id=?", (member.id,))
+    blacklisted = cursor.fetchone()
 
-if is_blacklisted:
-    await member.guild.ban(member, reason="黑名單再次違規")
-    return
-else:
-    add_blacklist(member.id, reason)
-    await timeout(member, 60)
+    if blacklisted:
+        await member.guild.ban(member, reason="黑名單再次違規")
+        print(f"{member} 已被封鎖（黑名單再次違規）")
+    else:
+        from datetime import timedelta
+        await member.timeout(timedelta(seconds=60), reason=reason)
+
+        cursor.execute("INSERT OR IGNORE INTO blacklist (user_id) VALUES (?)", (member.id,))
+        conn.commit()
 # ================= 刷頻 & @everyone =================
 
 message_tracker = defaultdict(list)
@@ -354,6 +357,7 @@ async def view_blacklist(interaction: discord.Interaction):
     await interaction.response.send_message(msg)
 
 bot.run(TOKEN)
+
 
 
 
