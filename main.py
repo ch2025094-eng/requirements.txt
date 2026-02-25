@@ -42,7 +42,8 @@ CREATE TABLE IF NOT EXISTS settings (
     guild_id INTEGER PRIMARY KEY,
     anti_role_delete INTEGER DEFAULT 1,
     anti_guild_rename INTEGER DEFAULT 1,
-    anti_channel_delete INTEGER DEFAULT 1
+    anti_channel_delete INTEGER DEFAULT 1,
+    anti_channel_create INTEGER DEFAULT 1
 )
 """)
 
@@ -148,6 +149,47 @@ async def on_guild_channel_delete(channel):
         await timeout(user, 60)
         break
 
+
+@bot.event
+async def on_guild_channel_create(channel):
+
+    cursor.execute("SELECT anti_channel_create FROM settings WHERE guild_id=?", (channel.guild.id,))
+    data = cursor.fetchone()
+    if not data or data[0] == 0:
+        return
+
+    async for entry in channel.guild.audit_logs(limit=1, action=discord.AuditLogAction.channel_create):
+        user = entry.user
+        break
+
+    if user.bot:
+        return
+
+    # 白名單略過
+    cursor.execute("SELECT 1 FROM whitelist WHERE user_id=?", (user.id,))
+    if cursor.fetchone():
+        return
+
+    # 黑名單再次觸發 = 直接封鎖
+    cursor.execute("SELECT 1 FROM blacklist WHERE user_id=?", (user.id,))
+    if cursor.fetchone():
+        await channel.guild.ban(user, reason="黑名單成員再次違規")
+        await channel.delete()
+        return
+
+    # 第一次違規 → 加黑名單 + timeout
+   cursor.execute("SELECT 1 FROM blacklist WHERE user_id=?", (member.id,))
+if cursor.fetchone():
+    await member.guild.ban(member, reason="黑名單再次違規")
+    return
+else:
+    add_blacklist(member.id, reason)
+    await timeout(member, 60)
+
+    try:
+        await channel.delete()
+    except:
+        pass
 # ================= 刷頻 & @everyone =================
 
 message_tracker = defaultdict(list)
@@ -163,14 +205,14 @@ async def on_message(message):
 
     now = datetime.now().timestamp()
 
-    # 6秒8則
+    # 5秒5則
     message_tracker[message.author.id].append(now)
     message_tracker[message.author.id] = [
         t for t in message_tracker[message.author.id]
-        if now - t < 6
+        if now - t < 5
     ]
 
-    if len(message_tracker[message.author.id]) >= 8:
+    if len(message_tracker[message.author.id]) >= 5:
         add_blacklist(message.author.id, "刷頻")
         await timeout(message.author, 60)
         return
@@ -209,33 +251,48 @@ async def help_command(interaction: discord.Interaction):
         "所有防護皆可開關"
     )
 
-@bot.tree.command(name="設定日誌頻道")
+@bot.tree.command(name="設定日誌頻道", description="設置專屬的日誌頻道")
 async def set_log(interaction: discord.Interaction, channel: discord.TextChannel):
     cursor.execute("INSERT OR REPLACE INTO config VALUES (?,?)",
                    (interaction.guild.id, channel.id))
     db.commit()
-    await interaction.response.send_message("日誌頻道已設定")
+    await interaction.response.send_message("✅日誌頻道已設定")
 
-@bot.tree.command(name="開關防刪角色")
+@bot.tree.command(name="開關防刪角色", description="開啟或關閉防刪角色功能")
 async def toggle_role(interaction: discord.Interaction, state: bool):
     cursor.execute("UPDATE settings SET anti_role_delete=? WHERE guild_id=?",
                    (int(state), interaction.guild.id))
     db.commit()
     await interaction.response.send_message(f"防刪角色已設為 {state}")
 
-@bot.tree.command(name="開關防改伺服器名稱")
+@bot.tree.command(name="開關防改伺服器名稱", description="開啟或關閉防改伺服器名稱功能")
 async def toggle_rename(interaction: discord.Interaction, state: bool):
     cursor.execute("UPDATE settings SET anti_guild_rename=? WHERE guild_id=?",
                    (int(state), interaction.guild.id))
     db.commit()
     await interaction.response.send_message(f"防改伺服器名稱已設為 {state}")
 
-@bot.tree.command(name="開關防刪頻道")
+@bot.tree.command(name="開關防刪頻道", description="開啟或關閉防刪頻道功能")
 async def toggle_channel(interaction: discord.Interaction, state: bool):
     cursor.execute("UPDATE settings SET anti_channel_delete=? WHERE guild_id=?",
                    (int(state), interaction.guild.id))
     db.commit()
     await interaction.response.send_message(f"防刪頻道已設為 {state}")
+
+@bot.tree.command(name="防新增頻道開關", description="開啟或關閉防新增頻道功能")
+@app_commands.checks.has_permissions(administrator=True)
+async def toggle_channel_create(interaction: discord.Interaction, 狀態: str):
+
+    value = 1 if 狀態 == "開啟" else 0
+
+    cursor.execute("""
+        INSERT INTO settings (guild_id, anti_channel_create)
+        VALUES (?,?)
+        ON CONFLICT(guild_id) DO UPDATE SET anti_channel_create=?
+    """, (interaction.guild.id, value, value))
+    db.commit()
+
+    await interaction.response.send_message(f"防新增頻道 已{'開啟' if value else '關閉'}")
 
 # ================= 黑白名單管理 =================
 
@@ -307,3 +364,4 @@ async def view_blacklist(interaction: discord.Interaction):
     await interaction.response.send_message(msg)
 
 bot.run(TOKEN)
+
