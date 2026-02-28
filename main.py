@@ -6,7 +6,7 @@ import os
 from datetime import datetime, timezone, timedelta
 from collections import defaultdict
 
-TOKEN = os.getenv("TOKEN")
+TOKEN = "DISCORD_TOKEN"
 
 intents = discord.Intents.all()
 bot = commands.Bot(command_prefix="!", intents=intents)
@@ -287,6 +287,7 @@ async def toggle_channel_create(interaction: discord.Interaction, 狀態: bool):
 # =========================
 
 bot.run(TOKEN)
+
 
 
 
